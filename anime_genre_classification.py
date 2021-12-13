@@ -7,7 +7,7 @@ Original file is located at
     https://colab.research.google.com/drive/1K09TskXUW2iQIqP1JyNmCwKHDi9d0wB7
 """
 
-
+import json
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
@@ -17,81 +17,226 @@ import nltk
 from nltk import word_tokenize
 from nltk.corpus import stopwords
 import string
-
-nltk.download('stopwords')
-nltk.download('punkt')
-
 import os
 import urllib.request
 import matplotlib.pyplot as plt
 from scipy import spatial
 from sklearn.manifold import TSNE
 import numpy as np
+from keras.layers import LSTM, Activation, Dropout, Dense, Input, Conv1D, MaxPooling1D, GlobalMaxPooling1D
+from keras.layers.embeddings import Embedding
+from keras.models import Model
+import re
+from keras.preprocessing.text import Tokenizer
+from sklearn.preprocessing import LabelBinarizer
+from keras.preprocessing.sequence import pad_sequences
+from sklearn.model_selection import train_test_split
+from itertools import chain
 
 
+nltk.download('stopwords')
+nltk.download('punkt')
+
+DATASIZE = 18000
+MAXLEN = 150
 
 """### Loading Data"""
-#importing anime dataset from our github repository
-anime_df = pd.read_csv('animes.csv')
+# importing anime dataset from our github repository
+anime_df = pd.read_csv('animes.csv', encoding='UTF-8')
 
-#Mohamed's genre extraction code
-data = anime_df[['title', 'synopsis', 'genre']]
-#delete all rows that has null genre
-#TODO: get how many null values dropped to include in paper
+# Mohamed's genre extraction code
+data = anime_df[['synopsis', 'genre']]
 data = data.dropna()
-#print(df['genre'])
+# delete all rows that has null genre
+# TODO: get how many null values dropped to include in paper
+print(data)
+# print(df['genre'])
 genres = set()
-for genre in data['genre']:
-    #split genre by ',' and igonre first and last characters which are (' and ')
+data['genre2'] = data['genre']
+for j, genre in enumerate(data['genre']):
+    # split genre by ',' and igonre first and last characters which are (' and ')
     s = genre[1:-1].split(',')
-    for i in s:
-        stripped = i.replace('\'', '').replace(' ', '')
+    for i, word in enumerate(s):
+        stripped = word.replace('\'', '').replace(' ', '')
+        if i == 0:
+            data.at[j, 'genre2'] = stripped
         genres.add(stripped)
-print(len(genres), genres)
 # Total of 43 genre
 
-"""### Preprocess Synopsis"""
+# Preprocess Synopsis
 data['synopsis'] = data['synopsis'].str.lower()
-# pre-processing the synopsis 
-anime_corpus = [i for i in data['synopsis']]
+
+stopwords = ["a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are", "as", "at", "be", "because",
+             "been", "before", "being", "below", "between", "both", "but", "by", "could", "did", "do", "does", "doing", "down", "during",
+             "each", "few", "for", "from", "further", "had", "has", "have", "having", "he", "he'd", "he'll", "he's", "her", "here",
+             "here's", "hers", "herself", "him", "himself", "his", "how", "how's", "i", "i'd", "i'll", "i'm", "i've", "if", "in", "into",
+             "is", "it", "it's", "its", "itself", "let's", "me", "more", "most", "my", "myself", "nor", "of", "on", "once", "only", "or",
+             "other", "ought", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "she'd", "she'll", "she's", "should",
+             "so", "some", "such", "than", "that", "that's", "the", "their", "theirs", "them", "themselves", "then", "there", "there's",
+             "these", "they", "they'd", "they'll", "they're", "they've", "this", "those", "through", "to", "too", "under", "until", "up",
+             "very", "was", "we", "we'd", "we'll", "we're", "we've", "were", "what", "what's", "when", "when's", "where", "where's",
+             "which", "while", "who", "who's", "whom", "why", "why's", "with", "would", "you", "you'd", "you'll", "you're", "you've",
+             "your", "yours", "yourself", "yourselves"]
+
+
 def remove_stopwords(data):
-  data['synopsis2'] = data['synopsis'].apply(lambda x : ' '.join([word for word in x.split() if word not in (stopwords.words('english'))]))
-  return data
+    data['synopsis2'] = data['synopsis'].apply(lambda x: ' '.join(
+        [word for word in x.split() if word not in (stopwords)]))
+    return data
+
 
 def remove_tags(string):
-    result = re.sub('<.*?>','',string)
+    result = re.sub('<.*?>', '', string)
     return result
 
+
+print("removing stopwords...")
 clean = remove_stopwords(data)
-clean['synopsis2']= clean['synopsis2'].apply(lambda cw : remove_tags(cw))
-data_without_stopwords['synopsis2'] = data_without_stopwords['synopsis2'].str.replace('[{}]'.format(string.punctuation), ' ')
+print("removed stopwords...")
+
+print("removing tags...")
+clean['synopsis2'] = clean['synopsis2'].apply(lambda cw: remove_tags(cw))
+print("removed tags...")
+clean['synopsis2'] = clean['synopsis2'].str.replace(
+    '[{}]'.format(string.punctuation), ' ')
 
 synopses = clean['synopsis2']
 print(synopses)
 
-exit(0);
-#Next Step, add GloVe embeddings and if possible try other kinds of embeddings such as tf-idf and word2vec and compare their results with GloVe's
+synopsis_list = []
+for i in range(len(synopses)):
+    synopsis_list.append(synopses[i])
 
-"""### Embeddings"""
+genres_list = list(genres)
+print(genres_list)
+labels = data['genre2']
+y = np.array(labels)
+#for i in range(len(labels)):
+ #   y.append(labels[i])
+
+X_train, X_test, Y_train, Y_test = train_test_split(synopsis_list, y, test_size=0.2, random_state=45)
+
+
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(X_train)
+word_map = tokenizer.word_index
+
+label_tokenizer = Tokenizer()
+#print("train_label_seq:", genres_list)
+label_tokenizer.fit_on_texts(genres_list)
+print("genres: " ,genres_list)
+train_label_seq = label_tokenizer.texts_to_sequences(Y_train)
+test_label_seq = label_tokenizer.texts_to_sequences(Y_test)
+print("train_label_seq:", len(train_label_seq))
+for i, label in enumerate(train_label_seq):
+	if len(label)>1:
+		train_label_seq[i]=[label[0]]
+		
+print("train_label_seq:", train_label_seq, len(train_label_seq))
+train_label_seq = list(chain.from_iterable(train_label_seq))
+print("train_label_seq:", train_label_seq, len(train_label_seq))
+
+
+
+
+# Next Step, add GloVe embeddings and if possible try other kinds of embeddings such as tf-idf and word2vec and compare their results with GloVe's
+
+# Embeddings
+
 
 def extract_embeddings(path):
-  emmbed_dict = {}
-  with open(path,'r') as f:
-    for word_vector in f:
-      v = word_vector.split()
-      word = v[0]
-      vector = np.asarray(v[1:], 'float32')
-      emmbed_dict[word]= vector 
-  return emmbed_dict
+    with open(path, 'r') as f:
+        words = set()
+        embed_dict = {}
+        for word_vector in f:
+            v = word_vector.split()
+            word = v[0]
+            vector = np.asarray(v[1:], 'float64')
+            embed_dict[word] = vector
+    return embed_dict
 
-emmbed_dict = extract_embeddings('/content/glove.6B.200d.txt')
-print(emmbed_dict)
 
-#eculidian distance is given to the sorting function to work as a sorting key. eculidian distance function finds the distance between two 1-D arrays
-def find_similar_word(word_vector, top_k): 
-  nearest = sorted(emmbed_dict.keys(), key = lambda word: spatial.distance.euclidean(emmbed_dict[word],word_vector))
-  return nearest[:top_k]
+embed_dict = extract_embeddings('glove.6B.200d.txt')
+
+# replacing all words in our vocab to glove weight vectors
+
+vocab_len = len(word_map)
+weights_len = embed_dict['anime'].shape[0]
+embeddings = np.zeros((vocab_len, weights_len))
+
+for word, index in word_map.items():
+	embedding = embed_dict.get(word)
+	if embedding is not None:
+		embeddings[index-1, :] = embedding
+
+embedding_layer = Embedding(input_dim=vocab_len, output_dim=weights_len,
+                            input_length=MAXLEN, weights=[embeddings], trainable=False)
+
+# Logistic Regression Model
+
+"""
+def lr(input_shape):
+    inp = Input(input_shape)
+    emb = embedding_layer(inp)
+    X = Dense(43, activation='sigmoid', input_shape=emb.shape)(emb)
+    model = Model(inputs=inp, outputs=X)
+
+    return model
+
+
+lr_model = lr((MAXLEN, ))
+print(lr_model.summary())
+"""
+# LSTM Model
+
+
+def lstm(input_shape):
+    inp = Input(input_shape)
+    emb = embedding_layer(inp)
+    X = LSTM(128, return_sequences=True)(emb)
+    X = Dropout(0.6)(X)
+    X = LSTM(128, return_sequences=True)(X)
+    X = Dropout(0.6)(X)
+    X = LSTM(128)(X)
+    X = Dense(45, activation='softmax')(X)
+    model = Model(inputs=inp, outputs=X)
+
+    return model
+
+
+lstm_model = lstm((MAXLEN,))
+print(lstm_model.summary())
+
+X_train_indices = tokenizer.texts_to_sequences(X_train)
+X_train_indices = pad_sequences(X_train_indices, maxlen=MAXLEN, padding='post')
+print("X_train_ indices:", X_train_indices)
+"""
+# compile and fit logistic regression model
+lr_model.compile(loss='categorical_crossentropy',
+                 optimizer='sgd',
+                 metrics=['accuracy'])
+lr_model.fit(X_train_indices, Y_train, epochs=4, batch_size=1, verbose=1)
+"""
+# compile and fit lstm model
+adam = tf.keras.optimizers.Adam(learning_rate=0.0001)
+lstm_model.compile(
+    optimizer=adam, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+lstm_model.fit(np.asarray(X_train_indices), np.asarray(train_label_seq), batch_size=64, epochs=15, verbose=1)
+
+X_test_indices = tokenizer.texts_to_sequences(X_test)
+X_test_indices = pad_sequences(X_test_indices, maxlen=MAXLEN, padding='post')
+
+#lr_model.evaluate(X_test_indices, Y_test)
+lstm_model.evaluate(X_test_indices, test_label_seq)
+
+
+# eculidian distance is given to the sorting function to work as a sorting key. eculidian distance function finds the distance between two 1-D arrays
+
+
+def find_similar_word(word_vector, top_k):
+    nearest = sorted(emmbed_dict.keys(), key=lambda word: spatial.distance.euclidean(
+        emmbed_dict[word], word_vector))
+    return nearest[:top_k]
+
 
 find_similar_word(emmbed_dict['anime'], 10)
-
-
